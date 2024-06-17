@@ -1,6 +1,6 @@
 import sqlparse
 from sqlparse.sql import Where, Comparison, Identifier, Parenthesis
-from sqlparse.tokens import Keyword, DML, Literal
+from sqlparse.tokens import Keyword, Literal, Comparison as ComparisonToken
 
 def extract_comparisons(tokens):
     comparisons = []
@@ -20,6 +20,9 @@ def get_identifier_name(identifier):
         return identifier.value.strip("'")
     else:
         return str(identifier)
+
+def is_static_value(token):
+    return token.ttype in (Literal.String.Single, Literal.Number.Integer, Literal.Number.Float)
 
 def parse_query(query):
     parsed_query = sqlparse.parse(query)[0]
@@ -45,23 +48,24 @@ def parse_query(query):
                 left_value = get_identifier_name(left)
                 right_value = get_identifier_name(right)
 
-                if operator.value == '=' and right.ttype in (Literal.String.Single, Literal.Number.Integer):
-                    column_value_pairs.append((left_value, right_value.strip("'"), True))
-                elif operator.value.upper() == 'LIKE' and right_value.startswith("%") and right_value.endswith("%"):
-                    column_value_pairs.append((left_value, right_value.strip("%"), True))
-                else:
-                    column_value_pairs.append((left_value, right_value, False))
+                if operator.ttype == ComparisonToken:
+                    if is_static_value(right):
+                        column_value_pairs.append((left_value, right_value.strip("'"), True))
+                    elif right_value.startswith("%") and right_value.endswith("%"):
+                        column_value_pairs.append((left_value, right_value.strip("%"), True))
+                    else:
+                        column_value_pairs.append((left_value, right_value, False))
 
     return column_value_pairs
 
 query1 = "select decrypt(cm15), cm13 from tabl21 a where decrypt(cm15) = '12345' and name like '%Manoj%' and cm13 = 1234567 and col3 = col4"
 query2 = """
 select * from  (
-    select column_name clo4 from tabl1 where column1 = 'First String' 
+    select column_name clo4, col5 from tabl1 where column1 = 'First String' 
 ) inner_1 left outer join ( 
-    select colum1, column3 from tabl2 where column2 = 'Column2 String'
+    select colum1, column3, column5 from tabl2 where column2 = 'Column2 String'
 ) main_1 on inner_1.col4 = main_1.column1  
-where column3 > 100
+where column3 > 100 and col5 = column5
 """
 
 for query in [query1, query2]:
