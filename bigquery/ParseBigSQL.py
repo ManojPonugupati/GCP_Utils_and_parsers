@@ -14,8 +14,10 @@ def extract_comparisons(tokens):
 def get_identifier_name(identifier):
     if isinstance(identifier, Identifier):
         return identifier.get_real_name()
+    elif isinstance(identifier, Function):
+        return get_identifier_name(identifier.tokens[-1])
     elif isinstance(identifier, Parenthesis):
-        return str(identifier)  # Keep as string to process later if needed
+        return get_identifier_name(identifier.tokens[1])  # Assume single token in parentheses
     elif identifier.ttype in (Keyword, Literal.String.Single, Literal.Number.Integer, Literal.Number.Float):
         return identifier.value.strip("'")
     else:
@@ -49,16 +51,10 @@ def parse_query(query):
                 right_value = get_identifier_name(right)
 
                 if operator.ttype == ComparisonToken:
-                    if isinstance(left, Function) and is_static_value(right):
-                        column_value_pairs.append((left.tokens[1].get_real_name(), right_value.strip("'"), True))
-                    elif isinstance(right, Function) and is_static_value(left):
-                        column_value_pairs.append((right.tokens[1].get_real_name(), left_value.strip("'"), True))
-                    elif is_static_value(right):
+                    if is_static_value(right):
                         column_value_pairs.append((left_value, right_value.strip("'"), True))
                     elif is_static_value(left):
                         column_value_pairs.append((right_value, left_value.strip("'"), True))
-                    elif right_value.startswith("%") and right_value.endswith("%"):
-                        column_value_pairs.append((left_value, right_value.strip("%"), True))
                     else:
                         column_value_pairs.append((left_value, right_value, False))
 
