@@ -11,6 +11,15 @@ def extract_comparisons(tokens):
             comparisons.extend(extract_comparisons(token.tokens))
     return comparisons
 
+def extract_in_clauses(tokens):
+    in_clauses = []
+    for token in tokens:
+        if token.is_group:
+            in_clauses.extend(extract_in_clauses(token.tokens))
+        if isinstance(token, Comparison) and 'IN' in str(token).upper():
+            in_clauses.append(token)
+    return in_clauses
+
 def get_identifier_name(identifier):
     if isinstance(identifier, Identifier):
         return identifier.get_real_name()
@@ -43,6 +52,8 @@ def parse_query(query):
 
     for clause in where_clauses:
         comparisons = extract_comparisons(clause.tokens)
+        in_clauses = extract_in_clauses(clause.tokens)
+
         for comp in comparisons:
             comp_tokens = [t for t in comp.tokens if not t.is_whitespace]
             if len(comp_tokens) >= 3:
@@ -58,6 +69,16 @@ def parse_query(query):
                     else:
                         column_value_pairs.append((left_value, right_value, False))
 
+        for clause in in_clauses:
+            in_tokens = [t for t in clause.tokens if not t.is_whitespace]
+            if len(in_tokens) >= 4:
+                left = in_tokens[0]
+                values = in_tokens[3]
+                if isinstance(values, Parenthesis):
+                    value_tokens = [t for t in values.tokens if not t.is_whitespace and t.ttype == Literal.String.Single]
+                    for value_token in value_tokens:
+                        column_value_pairs.append((get_identifier_name(left), value_token.value.strip("'"), True))
+
     return column_value_pairs
 
 query1 = "select decrypt(cm15), cm13 from tabl21 a where decrypt(cm15) = '12345' and name like '%Manoj%' and cm13 = 1234567 and col3 = col4"
@@ -70,8 +91,11 @@ select * from  (
 where column3 > 100
 """
 query3 = "select * from tabl where date(col3) = '2024-06-17' or col3 = date(col4)"
+query4 = "select col2, col3, col4 from table where col4 in ('12345', '23456', '34567')"
+query5 = "select col2, col3, col4 from table1 where `project_id.dataset_id.routine_id`('String_value', col1) = 'ManojKumar'"
+query6 = "select col1, col2, col3 from tbl2 where `project_id.dataset_id.routine_id`(`project_id.dataset_id.another_routine`('tabl2', 'col4'), col4) = '12345'"
 
-for query in [query1, query2, query3]:
+for query in [query1, query2, query3, query4, query5, query6]:
     result = parse_query(query)
     for column, value, is_static in result:
         print(f"column: {column}, Matching_value: {value}, static: {is_static}")
