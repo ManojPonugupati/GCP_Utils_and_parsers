@@ -4,14 +4,14 @@ from sqlparse.tokens import Keyword, Literal, Comparison as ComparisonToken, Pun
 import ast
 
 class TargetColumns:
-    TARGET_COLUMNS = ['col1', 'col3']
+    TARGET_COLUMNS = ['col1', 'col3', 'col6']
 
 def extract_comparisons(tokens, target_columns):
     comparisons = []
     for token in tokens:
         if isinstance(token, Comparison):
             left = get_identifier_name(token.left)
-            if left in target_columns:
+            if left in target_columns or isinstance(token.left, Function):
                 comparisons.append(token)
         elif token.is_group:
             comparisons.extend(extract_comparisons(token.tokens, target_columns))
@@ -32,12 +32,10 @@ def extract_in_clauses(tokens, target_columns):
     in_clauses = []
     in_found = False
     current_col = None
-
     for token in tokens:
-        print(in_found, token.value, current_col)
         if token.ttype == Keyword and token.value.upper() == 'IN':
             in_found = True
-        elif token.ttype == Name and token.value in target_columns:
+        elif in_found and token.ttype == Name and token.value in target_columns:
             current_col = token.value
         elif in_found and token.ttype == Punctuation and token.value == '(' and current_col:
             for item in flatten_nested_tuples(str(token.parent)):
@@ -52,13 +50,28 @@ def get_identifier_name(identifier):
     if isinstance(identifier, Identifier):
         return identifier.get_real_name()
     elif isinstance(identifier, Function):
-        return get_identifier_name(identifier.tokens[-1])
+        return get_function_column_name(identifier)
     elif isinstance(identifier, Parenthesis):
         return get_identifier_name(identifier.tokens[1])
     elif identifier.ttype in (Literal.String.Single, Literal.Number.Integer, Literal.Number.Float):
         return identifier.value.strip("'")
     else:
         return str(identifier)
+
+def get_function_column_name(function):
+    if isinstance(function, Function):
+        function_name = function.tokens[0].value.lower()
+        if function_name == 'cast':
+            for token in function.tokens:
+                if isinstance(token, Parenthesis):
+                    args = [t for t in token.tokens if not t.is_whitespace]
+                    return get_identifier_name(args[1])
+        elif function_name == 'substr':
+            for token in function.tokens:
+                if isinstance(token, Parenthesis):
+                    args = [t for t in token.tokens if not t.is_whitespace]
+                    return get_identifier_name(args[1])
+    return str(function)
 
 def is_static_value(token):
     return token.ttype in (Literal.String.Single, Literal.Number.Integer, Literal.Number.Float)
@@ -101,9 +114,16 @@ def parse_query(query, target_columns):
             val = item['value']
             column_value_pairs.append((left, val, True))
 
-    return column_value_pairs
+    # Fix function handling in column_value_pairs
+    final_pairs = []
+    for column, value, is_static in column_value_pairs:
+        if isinstance(column, str) and column.startswith('substr') or column.startswith('cast'):
+            column = column.split('(')[1].split(' ')[0]
+        final_pairs.append((column, value, is_static))
 
-# Example queries with IN clause
+    return final_pairs
+
+# Example queries with complex WHERE clause
 queries = [
     """
     select col2, col3, col4 from table where 
@@ -112,6 +132,7 @@ queries = [
      and col3 in ('112345')
      and col2 in (2345)
      and col5 = 'col5'
+     and substr(cast(col6 as string),1,10) = '1234567890'
     """
 ]
 

@@ -1,15 +1,14 @@
 import json
 from google.cloud import bigquery
-from google.cloud.exceptions import NotFound
 
 
 # Define the parse_query function (assuming it is already defined elsewhere)
 def parse_query(query):
     # This is a placeholder for the actual implementation
     return [
-        {"column": "name", "value": "John", "is_static": True},
-        {"column": "age", "value": "30", "is_static": False},
-        {"column": "city", "value": "New York", "is_static": True}
+        ("name", "John", True),
+        ("age", "30", False),
+        ("city", "New York", True)
     ]
 
 
@@ -20,12 +19,12 @@ def parse_and_store_queries(queries, project_id, job_id, output_file):
         # Parse the query
         result = parse_query(query)
 
-        # Transform result to desired format
+        # Transform result to desired format, considering only records with True boolean value
         parsed_result = {
             'project_id': project_id,
             'job_id': job_id,
             'query': query,
-            'parsed_columns': [{'column_name': r['column'], 'column_value': r['value']} for r in result]
+            'parsed_columns': [{'column_name': r[0], 'column_value': r[1]} for r in result if r[2]]
         }
 
         data.append(parsed_result)
@@ -56,7 +55,7 @@ def load_data_to_bigquery(json_file, dataset_id, table_id):
     # Create the table if it doesn't exist
     try:
         client.get_table(table_ref)
-    except NotFound:
+    except Exception:
         table = bigquery.Table(table_ref, schema=schema)
         table = client.create_table(table)
         print(f"Created table {table.project}.{table.dataset_id}.{table.table_id}")
