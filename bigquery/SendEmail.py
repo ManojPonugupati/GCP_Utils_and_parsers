@@ -3,8 +3,11 @@ import pandas as pd
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_v1_5
+import os
 
 
 # PostgreSQLReader Class
@@ -28,6 +31,7 @@ class PostgreSQLReader:
 
     def connect(self):
         password = self.decrypt_password()
+        print(f"Decrypted password: {password}")  # Debugging line to ensure password is correctly decrypted
         self.connection = psycopg2.connect(
             host=self.host,
             dbname=self.dbname,
@@ -49,12 +53,20 @@ class PostgreSQLReader:
 
 
 # Email Sending Function
-def send_email(subject, body, to_email, from_email, smtp_server, smtp_port, smtp_user, smtp_password):
+def send_email(subject, body, to_email, from_email, smtp_server, smtp_port, smtp_user, smtp_password, attachment_path):
     msg = MIMEMultipart()
     msg['From'] = from_email
     msg['To'] = to_email
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'html'))
+
+    # Attach the Excel file
+    with open(attachment_path, 'rb') as attachment:
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(attachment.read())
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename={os.path.basename(attachment_path)}')
+        msg.attach(part)
 
     server = smtplib.SMTP(smtp_server, smtp_port)
     server.starttls()
@@ -84,10 +96,14 @@ def main():
     pg_reader = PostgreSQLReader(**pg_details)
 
     html_tables = ""
-    for i, query in enumerate(queries):
-        df = pg_reader.fetch_data(query)
-        html_tables += f"<h2>Table {i + 1}</h2>"
-        html_tables += df.to_html(index=False, border=0)
+    excel_file_path = "query_results.xlsx"
+
+    with pd.ExcelWriter(excel_file_path, engine='xlsxwriter') as writer:
+        for i, query in enumerate(queries):
+            df = pg_reader.fetch_data(query)
+            html_tables += f"<h2>Table {i + 1}</h2>"
+            html_tables += df.to_html(index=False, border=0)
+            df.to_excel(writer, sheet_name=f'Table {i + 1}', index=False)
 
     pg_reader.close()
 
@@ -132,7 +148,8 @@ def main():
     smtp_password = "your_email_password"
 
     # Send the email
-    send_email(subject, html_content, to_email, from_email, smtp_server, smtp_port, smtp_user, smtp_password)
+    send_email(subject, html_content, to_email, from_email, smtp_server, smtp_port, smtp_user, smtp_password,
+               excel_file_path)
 
 
 if __name__ == "__main__":
