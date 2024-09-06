@@ -8,7 +8,7 @@ from pyspark.sql.functions import col, expr
 
 # Initialize Spark Session with GCS configuration
 spark = SparkSession.builder \
-    .appName("API Processing with Multi-threading and Direct Write to GCS") \
+    .appName("API Processing with Hybrid Memory Management") \
     .config("spark.hadoop.google.cloud.auth.service.account.enable", "true") \
     .config("spark.hadoop.google.cloud.auth.service.account.json.keyfile", "/path/to/your-service-account-key.json") \
     .getOrCreate()
@@ -29,18 +29,34 @@ df_filtered = df.filter(col("creation_time") >= expr("TIMESTAMP_SUB(CURRENT_TIME
 # Define the output file path on GCS
 output_path = "gs://your-bucket-name/output/results.csv"
 
-# Thread-safe function to write to CSV
+# Thread-safe write lock
 write_lock = threading.Lock()
 
+# List to hold results temporarily
+results = []
+max_results_size = 1000  # Adjust based on your system's memory capacity
 
-def write_to_csv(row, file_handle):
+
+def flush_results_to_file(file_handle):
+    """Write the results to the CSV file and clear the list."""
+    global results
     with write_lock:
         writer = csv.writer(file_handle)
-        writer.writerow(row)
+        for row in results:
+            writer.writerow(row)
+        results = []  # Clear the list after writing to file
 
 
-# Function to call the API and write the response directly to the file
-def call_api_and_write(query, file_handle):
+def append_result_and_check_memory(row, file_handle):
+    """Append result to the list and flush to file if the list size exceeds the threshold."""
+    global results
+    results.append(row)
+    if len(results) >= max_results_size:
+        flush_results_to_file(file_handle)
+
+
+def call_api_and_manage_memory(query, file_handle):
+    """Call the API and manage memory by periodically writing results to file."""
     api_url = "https://your-api-endpoint.com/parse-sql"
     headers = {'Content-Type': 'application/json'}
     payload = {"sql": query.query}
@@ -51,7 +67,6 @@ def call_api_and_write(query, file_handle):
             data = response.json()
             parsing_result = data.get("data", [])
 
-            # Convert API response to the nested format
             nested_response = [
                 {
                     "seqNum": item["seqNum"],
@@ -62,13 +77,13 @@ def call_api_and_write(query, file_handle):
                 }
                 for item in parsing_result
             ]
-
-            # Write the result directly to the file
-            write_to_csv((query.job_id, query.user_email, query.query, json.dumps(nested_response)), file_handle)
+            append_result_and_check_memory((query.job_id, query.user_email, query.query, json.dumps(nested_response)),
+                                           file_handle)
         else:
-            write_to_csv((query.job_id, query.user_email, query.query, "API call failed"), file_handle)
+            append_result_and_check_memory((query.job_id, query.user_email, query.query, "API call failed"),
+                                           file_handle)
     except Exception as e:
-        write_to_csv((query.job_id, query.user_email, query.query, f"Error: {str(e)}"), file_handle)
+        append_result_and_check_memory((query.job_id, query.user_email, query.query, f"Error: {str(e)}"), file_handle)
 
 
 # Main function to process queries with multi-threading
@@ -76,13 +91,16 @@ def process_query_with_threading(row):
     with open('/tmp/local_results.csv', mode='a', newline='', encoding='utf-8') as file_handle:
         threads = []
         for _ in range(5):  # Adjust number of threads based on system capability
-            thread = threading.Thread(target=call_api_and_write, args=(row, file_handle))
+            thread = threading.Thread(target=call_api_and_manage_memory, args=(row, file_handle))
             threads.append(thread)
             thread.start()
 
         # Wait for all threads to complete
         for thread in threads:
             thread.join()
+
+        # Flush any remaining results in memory to the file
+        flush_results_to_file(file_handle)
 
 
 # Apply the function to each row of the filtered DataFrame using RDD
