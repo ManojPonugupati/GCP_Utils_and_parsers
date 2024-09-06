@@ -1,7 +1,6 @@
 from pyspark.sql import SparkSession
 import requests
 import json
-import threading
 import csv
 import os
 from pyspark.sql.functions import col, expr
@@ -29,37 +28,13 @@ df_filtered = df.filter(col("creation_time") >= expr("TIMESTAMP_SUB(CURRENT_TIME
 # Define the output file path on GCS
 output_path = "gs://your-bucket-name/output/results.csv"
 
-# Thread-safe write lock
-write_lock = threading.Lock()
 
-# List to hold results temporarily
-results = []
-max_results_size = 1000  # Adjust based on your system's memory capacity
-
-
-def flush_results_to_file(file_handle):
-    """Write the results to the CSV file and clear the list."""
-    global results
-    with write_lock:
-        writer = csv.writer(file_handle)
-        for row in results:
-            writer.writerow(row)
-        results = []  # Clear the list after writing to file
-
-
-def append_result_and_check_memory(row, file_handle):
-    """Append result to the list and flush to file if the list size exceeds the threshold."""
-    global results
-    results.append(row)
-    if len(results) >= max_results_size:
-        flush_results_to_file(file_handle)
-
-
-def call_api_and_manage_memory(query, file_handle):
-    """Call the API and manage memory by periodically writing results to file."""
+# Function to call the API and collect results
+def call_api_and_collect(query):
     api_url = "https://your-api-endpoint.com/parse-sql"
     headers = {'Content-Type': 'application/json'}
     payload = {"sql": query.query}
+    results = []
 
     try:
         response = requests.post(api_url, json=payload, headers=headers)
@@ -77,34 +52,34 @@ def call_api_and_manage_memory(query, file_handle):
                 }
                 for item in parsing_result
             ]
-            append_result_and_check_memory((query.job_id, query.user_email, query.query, json.dumps(nested_response)),
-                                           file_handle)
+            results.append((query.job_id, query.user_email, query.query, json.dumps(nested_response)))
         else:
-            append_result_and_check_memory((query.job_id, query.user_email, query.query, "API call failed"),
-                                           file_handle)
+            results.append((query.job_id, query.user_email, query.query, "API call failed"))
     except Exception as e:
-        append_result_and_check_memory((query.job_id, query.user_email, query.query, f"Error: {str(e)}"), file_handle)
+        results.append((query.job_id, query.user_email, query.query, f"Error: {str(e)}"))
+
+    return results
 
 
-# Main function to process queries with multi-threading
-def process_query_with_threading(row):
+# Function to write collected results to CSV
+def write_results_to_csv(results):
     with open('/tmp/local_results.csv', mode='a', newline='', encoding='utf-8') as file_handle:
-        threads = []
-        for _ in range(5):  # Adjust number of threads based on system capability
-            thread = threading.Thread(target=call_api_and_manage_memory, args=(row, file_handle))
-            threads.append(thread)
-            thread.start()
-
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join()
-
-        # Flush any remaining results in memory to the file
-        flush_results_to_file(file_handle)
+        writer = csv.writer(file_handle)
+        writer.writerows(results)
 
 
-# Apply the function to each row of the filtered DataFrame using RDD
-df_filtered.rdd.foreach(process_query_with_threading)
+# Function to be executed on each partition
+def process_partition(partition):
+    local_results = []
+    for row in partition:
+        local_results.extend(call_api_and_collect(row))
+
+    # After processing the partition, write the results to a local file
+    write_results_to_csv(local_results)
+
+
+# Apply the function to each partition of the filtered DataFrame using RDD
+df_filtered.rdd.foreachPartition(process_partition)
 
 # Copy the local CSV file to GCS
 spark.sparkContext.addFile("/tmp/local_results.csv")  # Ensure the file is accessible to all nodes
