@@ -21,6 +21,6 @@ def test_max_workers(worker_counts, task_count):
         print(f"Completed in {elapsed_time:.2f} seconds with {workers} workers.\n")
 
 # Example usage: testing different worker counts
-worker_counts_to_test = [5, 10, 20, 50]  # Adjust based on your scenario
+worker_counts_to_test = [5, 10, 20, 50,100,200,400,800]  # Adjust based on your scenario
 task_count = 100  # Number of tasks to test
 test_max_workers(worker_counts_to_test, task_count)
