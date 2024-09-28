@@ -102,4 +102,4 @@ df_with_response.write \
 os.system(f"gsutil cp /tmp/api_processing.log {log_output_path}")
 
 # Stop the Spark session
-spark.stop()
+spark.stop() 
