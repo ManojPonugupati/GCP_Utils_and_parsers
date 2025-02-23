@@ -30,6 +30,8 @@ def hi():
 
     # Print the dictionary
     print(Dict)
+    num=123
+    print(num % 1 )
 
 
 # calling main function using __name__
