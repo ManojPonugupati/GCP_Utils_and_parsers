@@ -1,0 +1,6 @@
+SELECT
+    project_id,
+    usage_date,
+    predicted_tb,
+    predicted_tb * 0.50 AS cost_per_day
+FROM ML.FORECAST(MODEL `your_project.dataset.storage_forecast_model`, STRUCT(365 AS horizon))
